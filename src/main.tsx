@@ -911,18 +911,20 @@ function App() {
               ))}
             </select>
           </label>
-          <ImageInput
-            label="图 A"
-            image={imageA}
-            onChange={handleImageChange(setImageA)}
-            onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
-          />
-          <ImageInput
-            label="图 B"
-            image={imageB}
-            onChange={handleImageChange(setImageB)}
-            onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
-          />
+          <div className="image-input-grid">
+            <ImageInput
+              label="图 A"
+              image={imageA}
+              onChange={handleImageChange(setImageA)}
+              onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
+            />
+            <ImageInput
+              label="图 B"
+              image={imageB}
+              onChange={handleImageChange(setImageB)}
+              onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
+            />
+          </div>
           <label className="field">
             <span className="field__label">生成描述</span>
             <textarea
@@ -1196,21 +1198,6 @@ function App() {
               </section>
             ) : null}
             <section className="detail-section">
-              <h3>任务日志</h3>
-              {selectedTask.logs.length === 0 ? (
-                <p>暂无日志。</p>
-              ) : (
-                <div className="task-log-list">
-                  {selectedTask.logs.map((log) => (
-                    <div className={`task-log task-log--${log.level}`} key={log.id}>
-                      <time>{new Date(log.time).toLocaleTimeString()}</time>
-                      <span>{log.message}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-            <section className="detail-section">
               <h3>结果图</h3>
               {selectedTask.status !== "success" ? (
                 <p>当前任务还没有可预览的结果。</p>
@@ -1280,6 +1267,21 @@ function App() {
               重做
             </button>
             </div>
+            <section className="detail-section detail-section--logs">
+              <h3>任务日志</h3>
+              {selectedTask.logs.length === 0 ? (
+                <p>暂无日志。</p>
+              ) : (
+                <div className="task-log-list">
+                  {selectedTask.logs.map((log) => (
+                    <div className={`task-log task-log--${log.level}`} key={log.id}>
+                      <time>{new Date(log.time).toLocaleTimeString()}</time>
+                      <span>{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         )}
       </section>
