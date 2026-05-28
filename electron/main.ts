@@ -2,11 +2,13 @@ import { app, BrowserWindow, ipcMain } from "electron";
 import path from "node:path";
 import {
   executeCozeWorkflow,
+  pollCozeWorkflowResult,
   persistWorkflowResultImages,
   runCozeGenerationTask,
+  startCozeWorkflow,
   uploadCozeImagePair
 } from "./cozeClient";
-import { getCozeConfigStatus } from "./config";
+import { getCozeConfigStatus, getEditableCozeConfig, saveCozeConfig } from "./config";
 import { exportGeneratedResults, saveSingleResultImage } from "./exportResults";
 import { getImageDataUrl } from "./media";
 
@@ -35,9 +37,20 @@ function createMainWindow() {
 
 app.whenReady().then(() => {
   ipcMain.handle("coze:get-config-status", () => getCozeConfigStatus());
+  ipcMain.handle("coze:get-config", () => getEditableCozeConfig());
+  ipcMain.handle("coze:save-config", (_event, input) => saveCozeConfig(input));
   ipcMain.handle("coze:upload-images", (_event, input) =>
     uploadCozeImagePair(input.imageAPath, input.imageBPath)
   );
+  ipcMain.handle("coze:start-workflow", (_event, input) => startCozeWorkflow(input));
+  ipcMain.handle("coze:poll-workflow", async (_event, input) => {
+    const result = await pollCozeWorkflowResult(input.executeId);
+
+    return {
+      ...result,
+      resultImages: await persistWorkflowResultImages(result.resultImages, input.taskId)
+    };
+  });
   ipcMain.handle("coze:execute-workflow", async (_event, input) => {
     const result = await executeCozeWorkflow(input);
 

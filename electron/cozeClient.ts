@@ -95,6 +95,14 @@ export type CozeTaskInput = {
 
 export type CozeWorkflowResult = {
   resultImages: string[];
+  executeId?: string;
+  debugUrl?: string;
+  raw: unknown;
+};
+
+export type CozeWorkflowStartResult = {
+  executeId: string;
+  debugUrl?: string;
   raw: unknown;
 };
 
@@ -298,6 +306,52 @@ function extractExecuteId(value: unknown): string | undefined {
   return undefined;
 }
 
+function extractDebugUrl(value: unknown): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  if (typeof value === "string") {
+    try {
+      return extractDebugUrl(JSON.parse(value));
+    } catch {
+      return value.startsWith("http") && value.includes("work_flow") ? value : undefined;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const debugUrl = extractDebugUrl(item);
+
+      if (debugUrl) {
+        return debugUrl;
+      }
+    }
+
+    return undefined;
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    for (const key of ["debug_url", "debugUrl"]) {
+      if (typeof record[key] === "string") {
+        return record[key] as string;
+      }
+    }
+
+    for (const item of Object.values(record)) {
+      const debugUrl = extractDebugUrl(item);
+
+      if (debugUrl) {
+        return debugUrl;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function extractWorkflowStatus(value: unknown): unknown {
   if (!value) {
     return undefined;
@@ -387,7 +441,7 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
   }
 }
 
-async function startCozeWorkflow(input: CozeWorkflowInput) {
+export async function startCozeWorkflow(input: CozeWorkflowInput): Promise<CozeWorkflowStartResult> {
   const config = getCozeConfig();
   const responseBody = await fetchJsonWithTimeout(
     `${config.apiBase}${config.workflowRunPath}`,
@@ -416,6 +470,7 @@ async function startCozeWorkflow(input: CozeWorkflowInput) {
   );
 
   const executeId = extractExecuteId(responseBody);
+  const debugUrl = extractDebugUrl(responseBody);
 
   if (!executeId) {
     throw new Error(`Coze async workflow response did not include execute_id: ${safeJsonPreview(responseBody)}`);
@@ -425,7 +480,8 @@ async function startCozeWorkflow(input: CozeWorkflowInput) {
 
   return {
     executeId,
-    completedResult: undefined
+    debugUrl,
+    raw: responseBody
   };
 }
 
@@ -445,7 +501,7 @@ async function getCozeWorkflowHistory(executeId: string) {
   );
 }
 
-async function pollCozeWorkflowResult(executeId: string): Promise<CozeWorkflowResult> {
+export async function pollCozeWorkflowResult(executeId: string): Promise<CozeWorkflowResult> {
   const config = getCozeConfig();
   const startedAt = Date.now();
   let lastHistory: unknown;
@@ -456,6 +512,7 @@ async function pollCozeWorkflowResult(executeId: string): Promise<CozeWorkflowRe
     const status = extractWorkflowStatus(history);
     const outputPayload = getExplicitOutputPayload(history);
     const resultImages = collectImageUrls(outputPayload);
+    const debugUrl = extractDebugUrl(history);
 
     console.log(
       `[coze] polling execute_id=${executeId} status=${String(status ?? "unknown")} has_output=${outputPayload !== undefined} images=${resultImages.length}`
@@ -464,6 +521,8 @@ async function pollCozeWorkflowResult(executeId: string): Promise<CozeWorkflowRe
     if (resultImages.length > 0 && isFinishedWorkflowStatus(status)) {
       return {
         resultImages,
+        executeId,
+        debugUrl,
         raw: history
       };
     }
@@ -486,10 +545,6 @@ async function pollCozeWorkflowResult(executeId: string): Promise<CozeWorkflowRe
 
 export async function executeCozeWorkflow(input: CozeWorkflowInput): Promise<CozeWorkflowResult> {
   const started = await startCozeWorkflow(input);
-
-  if (started.completedResult) {
-    return started.completedResult;
-  }
 
   return pollCozeWorkflowResult(started.executeId);
 }

@@ -6,6 +6,13 @@ export type TaskStatus =
   | "failed"
   | "cancelled";
 
+export type TaskLog = {
+  id: string;
+  time: string;
+  level: "info" | "error";
+  message: string;
+};
+
 export type GenerationTask = {
   id: string;
   type: number;
@@ -18,6 +25,9 @@ export type GenerationTask = {
   progressLabel: string;
   resultImages: string[];
   errorMessage?: string;
+  executeId?: string;
+  debugUrl?: string;
+  logs: TaskLog[];
   createdAt: string;
   updatedAt: string;
   retryFromTaskId?: string;
@@ -48,6 +58,7 @@ export function createGenerationTask(
     progress: 0,
     progressLabel: "等待开始",
     resultImages: [],
+    logs: [],
     createdAt: timestamp,
     updatedAt: timestamp
   };

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 export type CozeConfig = {
@@ -17,6 +17,31 @@ export type CozeConfigStatus = {
   hasApiToken: boolean;
   hasWorkflowId: boolean;
   isReady: boolean;
+  taskConcurrency: number;
+};
+
+export type EditableCozeConfig = CozeConfigStatus & {
+  apiTokenPreview?: string;
+  workflowId: string;
+  apiBase: string;
+  fileUploadPath: string;
+  workflowRunPath: string;
+  workflowTimeoutMs: number;
+  workflowHistoryPath: string;
+  workflowPollIntervalMs: number;
+  workflowPollTimeoutMs: number;
+};
+
+export type SaveCozeConfigInput = {
+  apiToken?: string;
+  workflowId: string;
+  apiBase: string;
+  fileUploadPath: string;
+  workflowRunPath: string;
+  workflowTimeoutMs: number;
+  workflowHistoryPath: string;
+  workflowPollIntervalMs: number;
+  workflowPollTimeoutMs: number;
   taskConcurrency: number;
 };
 
@@ -71,6 +96,78 @@ export function getCozeConfigStatus(): CozeConfigStatus {
     isReady: hasApiToken && hasWorkflowId,
     taskConcurrency: Number(process.env.TASK_CONCURRENCY || 2)
   };
+}
+
+function getOptionalConfigValue(key: string, fallback: string) {
+  return process.env[key] || fallback;
+}
+
+function getOptionalConfigNumber(key: string, fallback: number) {
+  const value = Number(process.env[key]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function previewSecret(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+
+  return value.length <= 8 ? "已配置" : `${value.slice(0, 4)}...${value.slice(-4)}`;
+}
+
+export function getEditableCozeConfig(): EditableCozeConfig {
+  loadDotEnv();
+
+  return {
+    ...getCozeConfigStatus(),
+    apiTokenPreview: previewSecret(process.env.COZE_API_TOKEN),
+    workflowId: process.env.COZE_WORKFLOW_ID || "",
+    apiBase: getOptionalConfigValue("COZE_API_BASE", "https://api.coze.cn"),
+    fileUploadPath: getOptionalConfigValue("COZE_FILE_UPLOAD_PATH", "/v1/files/upload"),
+    workflowRunPath: getOptionalConfigValue("COZE_WORKFLOW_RUN_PATH", "/v1/workflow/run"),
+    workflowTimeoutMs: getOptionalConfigNumber("COZE_WORKFLOW_TIMEOUT_MS", 300000),
+    workflowHistoryPath: getOptionalConfigValue(
+      "COZE_WORKFLOW_HISTORY_PATH",
+      "/v1/workflows/:workflow_id/run_histories/:execute_id"
+    ),
+    workflowPollIntervalMs: getOptionalConfigNumber("COZE_WORKFLOW_POLL_INTERVAL_MS", 3000),
+    workflowPollTimeoutMs: getOptionalConfigNumber("COZE_WORKFLOW_POLL_TIMEOUT_MS", 600000)
+  };
+}
+
+function serializeEnvValue(value: string | number) {
+  return String(value).replace(/\n/g, "");
+}
+
+export function saveCozeConfig(input: SaveCozeConfigInput): EditableCozeConfig {
+  loadDotEnv();
+
+  const nextToken = input.apiToken?.trim() || process.env.COZE_API_TOKEN || "";
+  const entries: Record<string, string | number> = {
+    COZE_API_TOKEN: nextToken,
+    COZE_WORKFLOW_ID: input.workflowId.trim(),
+    COZE_API_BASE: input.apiBase.trim() || "https://api.coze.cn",
+    COZE_FILE_UPLOAD_PATH: input.fileUploadPath.trim() || "/v1/files/upload",
+    COZE_WORKFLOW_RUN_PATH: input.workflowRunPath.trim() || "/v1/workflow/run",
+    COZE_WORKFLOW_TIMEOUT_MS: input.workflowTimeoutMs || 300000,
+    COZE_WORKFLOW_HISTORY_PATH:
+      input.workflowHistoryPath.trim() || "/v1/workflows/:workflow_id/run_histories/:execute_id",
+    COZE_WORKFLOW_POLL_INTERVAL_MS: input.workflowPollIntervalMs || 3000,
+    COZE_WORKFLOW_POLL_TIMEOUT_MS: input.workflowPollTimeoutMs || 600000,
+    TASK_CONCURRENCY: input.taskConcurrency || 2
+  };
+
+  for (const [key, value] of Object.entries(entries)) {
+    process.env[key] = serializeEnvValue(value);
+  }
+
+  const envContent = `${Object.entries(entries)
+    .map(([key, value]) => `${key}=${serializeEnvValue(value)}`)
+    .join("\n")}\n`;
+
+  writeFileSync(path.join(process.cwd(), ".env"), envContent, "utf8");
+
+  return getEditableCozeConfig();
 }
 
 export function getCozeConfig(): CozeConfig {

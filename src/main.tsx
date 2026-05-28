@@ -1,8 +1,60 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { getEnabledGenerateTypes, getGenerateTypeByValue } from "./domain/generationTypes";
-import { createGenerationTask, createRedoTask, type GenerationTask } from "./domain/tasks";
+import { createGenerationTask, createRedoTask, type GenerationTask, type TaskLog } from "./domain/tasks";
 import "./styles.css";
+
+if (!window.appBridge) {
+  window.appBridge = {
+    version: "browser-preview",
+    getPathForFile: (file) => file.name,
+    pathToFileUrl: (filePath) => filePath,
+    getCozeConfigStatus: async () => ({
+      hasApiToken: false,
+      hasWorkflowId: false,
+      isReady: false,
+      taskConcurrency: 2
+    }),
+    getCozeConfig: async () => ({
+      hasApiToken: false,
+      hasWorkflowId: false,
+      isReady: false,
+      taskConcurrency: 2,
+      workflowId: "",
+      apiBase: "https://api.coze.cn",
+      fileUploadPath: "/v1/files/upload",
+      workflowRunPath: "/v1/workflow/run",
+      workflowTimeoutMs: 300000,
+      workflowHistoryPath: "/v1/workflows/:workflow_id/run_histories/:execute_id",
+      workflowPollIntervalMs: 3000,
+      workflowPollTimeoutMs: 600000
+    }),
+    saveCozeConfig: async (input) => ({
+      hasApiToken: Boolean(input.apiToken),
+      hasWorkflowId: Boolean(input.workflowId),
+      isReady: Boolean(input.apiToken && input.workflowId),
+      ...input
+    }),
+    uploadCozeImages: async () => {
+      throw new Error("请在 Electron 应用中运行 Coze 上传。");
+    },
+    executeCozeWorkflow: async () => {
+      throw new Error("请在 Electron 应用中运行 Coze 工作流。");
+    },
+    startCozeWorkflow: async () => {
+      throw new Error("请在 Electron 应用中运行 Coze 工作流。");
+    },
+    pollCozeWorkflow: async () => {
+      throw new Error("请在 Electron 应用中运行 Coze 工作流。");
+    },
+    runCozeTask: async () => {
+      throw new Error("请在 Electron 应用中运行 Coze 任务。");
+    },
+    exportResults: async () => ({ exportedCount: 0 }),
+    saveResultImage: async () => ({ saved: false }),
+    getImageDataUrl: async (filePath) => filePath
+  };
+}
 
 const TASK_STATUS_LABELS: Record<GenerationTask["status"], string> = {
   pending: "等待中",
@@ -14,12 +66,33 @@ const TASK_STATUS_LABELS: Record<GenerationTask["status"], string> = {
 };
 
 const TASK_STORAGE_KEY = "generate-image.tasks";
+type TaskStatusFilter = "all" | GenerationTask["status"];
+
+const TASK_STATUS_FILTERS: { value: TaskStatusFilter; label: string }[] = [
+  { value: "all", label: "全部" },
+  { value: "pending", label: "等待" },
+  { value: "uploading", label: "上传" },
+  { value: "running", label: "运行" },
+  { value: "success", label: "成功" },
+  { value: "failed", label: "失败" }
+];
+
+function createTaskLog(level: TaskLog["level"], message: string): TaskLog {
+  return {
+    id: crypto.randomUUID(),
+    time: new Date().toISOString(),
+    level,
+    message
+  };
+}
 
 function normalizeTask(task: GenerationTask): GenerationTask {
   return {
     ...task,
     progress: task.progress ?? getFallbackProgress(task.status),
-    progressLabel: task.progressLabel ?? TASK_STATUS_LABELS[task.status]
+    progressLabel: task.progressLabel ?? TASK_STATUS_LABELS[task.status],
+    resultImages: task.resultImages ?? [],
+    logs: task.logs ?? []
   };
 }
 
@@ -73,6 +146,25 @@ type FullscreenPreview = {
   imageUrl: string;
   imagePath?: string;
   canDownload: boolean;
+};
+
+type ActiveView = "workspace" | "settings";
+
+type ConfigForm = Awaited<ReturnType<Window["appBridge"]["getCozeConfig"]>> & {
+  apiToken: string;
+};
+
+const CONFIG_FIELD_LABELS: Record<keyof Omit<ConfigForm, "hasApiToken" | "hasWorkflowId" | "isReady" | "apiTokenPreview">, string> = {
+  apiToken: "Coze Token",
+  workflowId: "Workflow ID",
+  apiBase: "API Base",
+  fileUploadPath: "文件上传路径",
+  workflowRunPath: "工作流运行路径",
+  workflowTimeoutMs: "请求超时(ms)",
+  workflowHistoryPath: "历史轮询路径",
+  workflowPollIntervalMs: "轮询间隔(ms)",
+  workflowPollTimeoutMs: "轮询超时(ms)",
+  taskConcurrency: "任务并发数"
 };
 
 function ImageInput({ label, image, onChange, onPreview }: ImageInputProps) {
@@ -132,7 +224,16 @@ function ResultThumbnail({
   );
 }
 
+function ConfigStatusBadge({ ready }: { ready: boolean }) {
+  return (
+    <span className={`config-status-badge${ready ? " config-status-badge--ready" : ""}`}>
+      {ready ? "已就绪" : "未完成"}
+    </span>
+  );
+}
+
 function App() {
+  const [activeView, setActiveView] = React.useState<ActiveView>("workspace");
   const [imageA, setImageA] = React.useState<SelectedImage>();
   const [imageB, setImageB] = React.useState<SelectedImage>();
   const enabledTypes = React.useMemo(() => getEnabledGenerateTypes(), []);
@@ -146,10 +247,14 @@ function App() {
   const [redoPrompt, setRedoPrompt] = React.useState("");
   const [taskConcurrency, setTaskConcurrency] = React.useState(2);
   const [isQueuePaused, setIsQueuePaused] = React.useState(false);
+  const [taskStatusFilter, setTaskStatusFilter] = React.useState<TaskStatusFilter>("all");
   const runningTaskIdsRef = React.useRef<Set<string>>(new Set());
   const [formError, setFormError] = React.useState<string>();
   const [queueMessage, setQueueMessage] = React.useState<string>();
+  const [settingsMessage, setSettingsMessage] = React.useState<string>();
+  const [settingsError, setSettingsError] = React.useState<string>();
   const [configReady, setConfigReady] = React.useState<boolean>();
+  const [configForm, setConfigForm] = React.useState<ConfigForm>();
   const [imageUrls, setImageUrls] = React.useState<Record<string, string>>({});
   const isPromptEmpty = prompt.trim().length === 0;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
@@ -164,6 +269,7 @@ function App() {
     (task) => task.status === "success" && task.resultImages.length > 0
   ).length;
   const allExportableTasks = tasks.filter((task) => task.status === "success" && task.resultImages.length > 0);
+  const filteredTasks = tasks.filter((task) => taskStatusFilter === "all" || task.status === taskStatusFilter);
   const hasSelectedAllExportableTasks =
     allExportableTasks.length > 0 && allExportableTasks.every((task) => selectedTaskIds.has(task.id));
 
@@ -288,10 +394,94 @@ function App() {
     setQueueMessage(`已删除 ${deletableTaskIds.size} 个任务。`);
   }
 
+  function clearTasksByStatus(statuses: GenerationTask["status"][], label: string) {
+    const statusSet = new Set(statuses);
+    const removableTasks = tasks.filter((task) => statusSet.has(task.status));
+
+    if (removableTasks.length === 0) {
+      setQueueMessage(`没有可清理的${label}任务。`);
+      return;
+    }
+
+    if (!window.confirm(`确定清理 ${removableTasks.length} 个${label}任务吗？`)) {
+      return;
+    }
+
+    const removableIds = new Set(removableTasks.map((task) => task.id));
+
+    setTasks((currentTasks) => currentTasks.filter((task) => !removableIds.has(task.id)));
+    setSelectedTaskIds((currentIds) => new Set([...currentIds].filter((taskId) => !removableIds.has(taskId))));
+
+    if (selectedTaskId && removableIds.has(selectedTaskId)) {
+      setSelectedTaskId(undefined);
+      setSelectedResultIndex(0);
+    }
+
+    setQueueMessage(`已清理 ${removableTasks.length} 个${label}任务。`);
+  }
+
   function enqueueTask(task: GenerationTask) {
     setTasks((currentTasks) => [task, ...currentTasks]);
     setSelectedTaskId(task.id);
     setSelectedResultIndex(0);
+  }
+
+  function appendTaskLog(taskId: string, level: TaskLog["level"], message: string) {
+    setTasks((currentTasks) =>
+      currentTasks.map((item) =>
+        item.id === taskId
+          ? {
+              ...item,
+              logs: [...(item.logs ?? []), createTaskLog(level, message)],
+              updatedAt: new Date().toISOString()
+            }
+          : item
+      )
+    );
+  }
+
+  async function pollTaskResult(taskId: string, executeId: string) {
+    try {
+      const result = await window.appBridge.pollCozeWorkflow({ taskId, executeId });
+
+      setTasks((currentTasks) =>
+        currentTasks.map((item) =>
+          item.id === taskId
+            ? {
+                ...item,
+                status: "success",
+                progress: 100,
+                progressLabel: "生成完成",
+                resultImages: result.resultImages,
+                executeId: result.executeId ?? item.executeId ?? executeId,
+                debugUrl: result.debugUrl ?? item.debugUrl,
+                logs: [...(item.logs ?? []), createTaskLog("info", `任务完成，返回 ${result.resultImages.length} 张结果图。`)],
+                updatedAt: new Date().toISOString()
+              }
+            : item
+        )
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "生成失败。";
+
+      setTasks((currentTasks) =>
+        currentTasks.map((item) =>
+          item.id === taskId
+            ? {
+                ...item,
+                status: "failed",
+                progress: 100,
+                progressLabel: "任务失败",
+                errorMessage,
+                logs: [...(item.logs ?? []), createTaskLog("error", errorMessage)],
+                updatedAt: new Date().toISOString()
+              }
+            : item
+        )
+      );
+    } finally {
+      runningTaskIdsRef.current.delete(taskId);
+    }
   }
 
   async function executeTask(task: GenerationTask) {
@@ -308,6 +498,7 @@ function App() {
         progress: 20,
         progressLabel: "正在上传参考图",
         errorMessage: undefined,
+        logs: [...(task.logs ?? []), createTaskLog("info", "开始上传参考图。")],
         updatedAt: new Date().toISOString()
       };
 
@@ -326,16 +517,16 @@ function App() {
             ? {
                 ...item,
                 status: "running",
-                progress: 65,
-                progressLabel: "工作流执行中，正在轮询结果",
+                progress: 55,
+                progressLabel: "参考图上传完成，正在启动工作流",
+                logs: [...(item.logs ?? []), createTaskLog("info", "参考图上传完成，准备启动 Coze 工作流。")],
                 updatedAt: new Date().toISOString()
               }
             : item
         )
       );
 
-      const result = await window.appBridge.executeCozeWorkflow({
-        taskId: task.id,
+      const started = await window.appBridge.startCozeWorkflow({
         type: task.type,
         image1Id: uploadedImages.image1Id,
         image2Id: uploadedImages.image2Id,
@@ -347,15 +538,19 @@ function App() {
           item.id === task.id
             ? {
                 ...item,
-                status: "success",
-                progress: 100,
-                progressLabel: "生成完成",
-                resultImages: result.resultImages,
+                status: "running",
+                progress: 65,
+                progressLabel: "工作流执行中，正在轮询结果",
+                executeId: started.executeId,
+                debugUrl: started.debugUrl,
+                logs: [...(item.logs ?? []), createTaskLog("info", `工作流已启动，execute_id=${started.executeId}。`)],
                 updatedAt: new Date().toISOString()
               }
             : item
         )
       );
+
+      await pollTaskResult(task.id, started.executeId);
     } catch (error) {
       setTasks((currentTasks) =>
         currentTasks.map((item) =>
@@ -366,6 +561,10 @@ function App() {
                 progress: 100,
                 progressLabel: "任务失败",
                 errorMessage: error instanceof Error ? error.message : "生成失败。",
+                logs: [
+                  ...(item.logs ?? []),
+                  createTaskLog("error", error instanceof Error ? error.message : "生成失败。")
+                ],
                 updatedAt: new Date().toISOString()
               }
             : item
@@ -396,6 +595,11 @@ function App() {
     }
 
     await window.appBridge.saveResultImage(fullscreenPreview.imagePath);
+  }
+
+  async function copyText(text: string, label: string) {
+    await navigator.clipboard.writeText(text);
+    setQueueMessage(`已复制${label}。`);
   }
 
   function handleRetryTask(task: GenerationTask) {
@@ -439,16 +643,118 @@ function App() {
     );
   }
 
-  React.useEffect(() => {
-    window.appBridge.getCozeConfigStatus().then((status) => {
+  async function refreshConfig() {
+    setSettingsError(undefined);
+
+    try {
+      const config = await window.appBridge.getCozeConfig();
+
+      setConfigReady(config.isReady);
+      setTaskConcurrency(config.taskConcurrency || 2);
+      setConfigForm({
+        ...config,
+        apiToken: ""
+      });
+    } catch (error) {
+      const status = await window.appBridge.getCozeConfigStatus();
+
       setConfigReady(status.isReady);
       setTaskConcurrency(status.taskConcurrency || 2);
-    });
+      setConfigForm({
+        ...status,
+        workflowId: "",
+        apiBase: "https://api.coze.cn",
+        fileUploadPath: "/v1/files/upload",
+        workflowRunPath: "/v1/workflow/run",
+        workflowTimeoutMs: 300000,
+        workflowHistoryPath: "/v1/workflows/:workflow_id/run_histories/:execute_id",
+        workflowPollIntervalMs: 3000,
+        workflowPollTimeoutMs: 600000,
+        apiToken: ""
+      });
+      setSettingsError(error instanceof Error ? error.message : "配置读取失败，请重启应用后重试。");
+    }
+  }
+
+  function updateConfigField<K extends keyof ConfigForm>(key: K, value: ConfigForm[K]) {
+    setConfigForm((currentConfig) => (currentConfig ? { ...currentConfig, [key]: value } : currentConfig));
+  }
+
+  async function handleSaveConfig(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!configForm) {
+      return;
+    }
+
+    setSettingsError(undefined);
+
+    try {
+      const savedConfig = await window.appBridge.saveCozeConfig({
+        apiToken: configForm.apiToken.trim() || undefined,
+        workflowId: configForm.workflowId,
+        apiBase: configForm.apiBase,
+        fileUploadPath: configForm.fileUploadPath,
+        workflowRunPath: configForm.workflowRunPath,
+        workflowTimeoutMs: Number(configForm.workflowTimeoutMs),
+        workflowHistoryPath: configForm.workflowHistoryPath,
+        workflowPollIntervalMs: Number(configForm.workflowPollIntervalMs),
+        workflowPollTimeoutMs: Number(configForm.workflowPollTimeoutMs),
+        taskConcurrency: Number(configForm.taskConcurrency)
+      });
+
+      setConfigReady(savedConfig.isReady);
+      setTaskConcurrency(savedConfig.taskConcurrency || 2);
+      setConfigForm({ ...savedConfig, apiToken: "" });
+      setSettingsMessage("配置已保存，后续新任务会使用最新配置。");
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : "配置保存失败。");
+    }
+  }
+
+  React.useEffect(() => {
+    void refreshConfig();
   }, []);
 
   React.useEffect(() => {
     localStorage.setItem(TASK_STORAGE_KEY, JSON.stringify(tasks));
   }, [tasks]);
+
+  React.useEffect(() => {
+    const resumableTasks = tasks.filter(
+      (task) => task.status === "running" && task.executeId && !runningTaskIdsRef.current.has(task.id)
+    );
+
+    for (const task of resumableTasks) {
+      runningTaskIdsRef.current.add(task.id);
+      appendTaskLog(task.id, "info", "检测到未完成任务，继续轮询结果。");
+      void pollTaskResult(task.id, task.executeId as string);
+    }
+
+    const interruptedUploadTasks = tasks.filter(
+      (task) => (task.status === "uploading" || task.status === "running") && !task.executeId
+    );
+
+    if (interruptedUploadTasks.length === 0) {
+      return;
+    }
+
+    setTasks((currentTasks) =>
+      currentTasks.map((task) =>
+        (task.status === "uploading" || task.status === "running") && !task.executeId
+          ? {
+              ...task,
+              status: "failed",
+              progress: 100,
+              progressLabel: "任务中断",
+              errorMessage: "应用重启时任务仍在上传阶段，无法恢复，请重试。",
+              logs: [...(task.logs ?? []), createTaskLog("error", "应用重启时任务仍在上传阶段，无法恢复，请重试。")],
+              updatedAt: new Date().toISOString()
+            }
+          : task
+      )
+    );
+  }, []);
 
   React.useEffect(() => {
     if (!queueMessage) {
@@ -459,6 +765,16 @@ function App() {
 
     return () => window.clearTimeout(timer);
   }, [queueMessage]);
+
+  React.useEffect(() => {
+    if (!settingsMessage) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setSettingsMessage(undefined), 2500);
+
+    return () => window.clearTimeout(timer);
+  }, [settingsMessage]);
 
   React.useEffect(() => {
     setSelectedTaskIds((currentIds) => {
@@ -556,14 +872,31 @@ function App() {
   }, [imageA, imageB]);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell${activeView === "settings" ? " app-shell--settings" : ""}`}>
       <section className="panel input-panel">
         <h1>批量生图工作台</h1>
         <p>上传两张参考图，选择生成类型，输入一句话后生成图片。</p>
         {configReady === false ? (
           <p className="config-warning">Coze Token 或 Workflow ID 尚未配置。</p>
         ) : null}
-        <div className="input-stack">
+        <nav className="side-nav" aria-label="页面导航">
+          <button
+            className={`side-nav__button${activeView === "workspace" ? " side-nav__button--active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("workspace")}
+          >
+            工作台
+          </button>
+          <button
+            className={`side-nav__button${activeView === "settings" ? " side-nav__button--active" : ""}`}
+            type="button"
+            onClick={() => setActiveView("settings")}
+          >
+            配置
+          </button>
+        </nav>
+        {activeView === "workspace" ? (
+          <div className="input-stack">
           <label className="field">
             <span className="field__label">生成类型</span>
             <select
@@ -605,30 +938,49 @@ function App() {
           <button className="primary-button" type="button" onClick={handleCreateTask}>
             创建任务
           </button>
-        </div>
+          </div>
+        ) : (
+          <div className="settings-intro">
+            <ConfigStatusBadge ready={Boolean(configReady)} />
+            <p>配置 Coze 连接、工作流和队列调度参数。</p>
+          </div>
+        )}
       </section>
+      {activeView === "workspace" ? (
+        <>
       <section className="panel queue-panel">
-        <h2>任务队列</h2>
-        <div className="queue-controls">
+        <div className="queue-header">
+          <div>
+            <h2>任务队列</h2>
+            <p className="queue-summary">
+              运行 {runningCount}，等待 {pendingCount}，并发 {taskConcurrency}，显示 {filteredTasks.length}
+            </p>
+          </div>
           {isQueuePaused ? (
-            <button className="secondary-button" type="button" onClick={handleResumeQueue}>
+            <button className="compact-button" type="button" onClick={handleResumeQueue}>
               继续调度
             </button>
           ) : (
-            <button className="secondary-button" type="button" onClick={handlePauseQueue}>
+            <button className="compact-button" type="button" onClick={handlePauseQueue}>
               暂停调度
             </button>
           )}
+        </div>
+        <div className="queue-filter-bar" aria-label="任务筛选">
+          {TASK_STATUS_FILTERS.map((filter) => (
+            <button
+              className={`filter-button${taskStatusFilter === filter.value ? " filter-button--active" : ""}`}
+              key={filter.value}
+              type="button"
+              onClick={() => setTaskStatusFilter(filter.value)}
+            >
+              {filter.label}
+            </button>
+          ))}
+        </div>
+        <div className="queue-actions">
           <button
-            className="secondary-button"
-            type="button"
-            disabled={!tasks.some((task) => task.status === "failed")}
-            onClick={handleRetryFailedTasks}
-          >
-            重试失败
-          </button>
-          <button
-            className="secondary-button"
+            className="compact-button"
             type="button"
             disabled={allExportableTasks.length === 0}
             onClick={selectAllExportableTasks}
@@ -636,15 +988,52 @@ function App() {
             {hasSelectedAllExportableTasks ? "取消全选成功" : "全选成功"}
           </button>
           <button
-            className="secondary-button"
+            className="compact-button"
             type="button"
             disabled={selectedTaskIds.size > 0 ? selectedExportableCount === 0 : allExportableTasks.length === 0}
             onClick={() => void exportTasks(selectedTaskIds.size > 0 ? selectedTasks : tasks)}
           >
             {selectedTaskIds.size > 0 ? `导出 (${selectedExportableCount})` : "导出"}
           </button>
+          <details className="queue-more">
+            <summary>更多操作</summary>
+            <div className="queue-more__menu">
+              <button
+                className="menu-button"
+                type="button"
+                disabled={!tasks.some((task) => task.status === "failed")}
+                onClick={handleRetryFailedTasks}
+              >
+                重试失败
+              </button>
+              <button
+                className="menu-button"
+                type="button"
+                disabled={!tasks.some((task) => task.status === "failed")}
+                onClick={() => clearTasksByStatus(["failed"], "失败")}
+              >
+                清理失败
+              </button>
+              <button
+                className="menu-button"
+                type="button"
+                disabled={!tasks.some((task) => task.status === "success")}
+                onClick={() => clearTasksByStatus(["success"], "成功")}
+              >
+                清理成功
+              </button>
+              <button
+                className="menu-button"
+                type="button"
+                disabled={!tasks.some((task) => task.status !== "uploading" && task.status !== "running")}
+                onClick={() => clearTasksByStatus(["pending", "success", "failed", "cancelled"], "历史")}
+              >
+                清理历史
+              </button>
+            </div>
+          </details>
           <button
-            className="danger-button"
+            className="compact-danger-button"
             type="button"
             disabled={selectedTaskIds.size === 0 && !selectedTask}
             onClick={() => deleteTasks(selectedTaskIds.size > 0 ? [...selectedTaskIds] : selectedTask ? [selectedTask.id] : [])}
@@ -652,15 +1041,12 @@ function App() {
             {selectedTaskIds.size > 0 ? `删除 (${selectedTaskIds.size})` : "删除当前"}
           </button>
         </div>
-        <p className="queue-summary">
-          运行中 {runningCount} 个，等待中 {pendingCount} 个，并发上限 {taskConcurrency}
-        </p>
         {queueMessage ? <p className="export-message">{queueMessage}</p> : null}
         <div className="task-list">
-          {tasks.length === 0 ? (
+          {filteredTasks.length === 0 ? (
             <p>暂无任务。</p>
           ) : (
-            tasks.map((task) => (
+            filteredTasks.map((task) => (
               <article
                 className={`task-row${task.id === selectedTaskId ? " task-row--selected" : ""}`}
                 key={task.id}
@@ -714,6 +1100,37 @@ function App() {
               </span>
               <span className="task-id">ID {selectedTask.id}</span>
             </div>
+            {(selectedTask.executeId || selectedTask.debugUrl) ? (
+              <section className="detail-section">
+                <h3>执行信息</h3>
+                <div className="metadata-list">
+                  {selectedTask.executeId ? (
+                    <div className="metadata-row">
+                      <span>execute_id</span>
+                      <button
+                        className="metadata-value"
+                        type="button"
+                        onClick={() => void copyText(selectedTask.executeId as string, "执行 ID")}
+                      >
+                        {selectedTask.executeId}
+                      </button>
+                    </div>
+                  ) : null}
+                  {selectedTask.debugUrl ? (
+                    <div className="metadata-row">
+                      <span>debug_url</span>
+                      <button
+                        className="metadata-value"
+                        type="button"
+                        onClick={() => void copyText(selectedTask.debugUrl as string, "调试链接")}
+                      >
+                        {selectedTask.debugUrl}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
             <div className="progress-block">
               <div className="progress-meta">
                 <span>{selectedTask.progressLabel}</span>
@@ -778,6 +1195,21 @@ function App() {
                 <pre className="error-detail">{selectedTask.errorMessage}</pre>
               </section>
             ) : null}
+            <section className="detail-section">
+              <h3>任务日志</h3>
+              {selectedTask.logs.length === 0 ? (
+                <p>暂无日志。</p>
+              ) : (
+                <div className="task-log-list">
+                  {selectedTask.logs.map((log) => (
+                    <div className={`task-log task-log--${log.level}`} key={log.id}>
+                      <time>{new Date(log.time).toLocaleTimeString()}</time>
+                      <span>{log.message}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
             <section className="detail-section">
               <h3>结果图</h3>
               {selectedTask.status !== "success" ? (
@@ -851,6 +1283,143 @@ function App() {
           </div>
         )}
       </section>
+        </>
+      ) : (
+        <section className="panel settings-panel">
+          <div className="settings-header">
+            <div>
+              <h2>配置</h2>
+              <p>保存后会写入项目根目录的 .env，新建任务会立即读取最新参数。</p>
+            </div>
+            <ConfigStatusBadge ready={Boolean(configReady)} />
+          </div>
+          {!configForm ? (
+            <p>正在读取配置...</p>
+          ) : (
+            <form className="settings-form" onSubmit={(event) => void handleSaveConfig(event)}>
+              <section className="settings-section">
+                <h3>Coze 工作流</h3>
+                <div className="settings-grid">
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.apiToken}</span>
+                    <input
+                      className="text-input"
+                      type="password"
+                      value={configForm.apiToken}
+                      placeholder={configForm.apiTokenPreview ? `当前 ${configForm.apiTokenPreview}，留空不修改` : "请输入 Coze Token"}
+                      onChange={(event) => updateConfigField("apiToken", event.currentTarget.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.workflowId}</span>
+                    <input
+                      className="text-input"
+                      value={configForm.workflowId}
+                      onChange={(event) => updateConfigField("workflowId", event.currentTarget.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.apiBase}</span>
+                    <input
+                      className="text-input"
+                      value={configForm.apiBase}
+                      onChange={(event) => updateConfigField("apiBase", event.currentTarget.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.taskConcurrency}</span>
+                    <input
+                      className="text-input"
+                      min={1}
+                      max={8}
+                      type="number"
+                      value={configForm.taskConcurrency}
+                      onChange={(event) => updateConfigField("taskConcurrency", Number(event.currentTarget.value))}
+                    />
+                  </label>
+                </div>
+              </section>
+              <section className="settings-section">
+                <h3>接口路径</h3>
+                <div className="settings-grid">
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.fileUploadPath}</span>
+                    <input
+                      className="text-input"
+                      value={configForm.fileUploadPath}
+                      onChange={(event) => updateConfigField("fileUploadPath", event.currentTarget.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.workflowRunPath}</span>
+                    <input
+                      className="text-input"
+                      value={configForm.workflowRunPath}
+                      onChange={(event) => updateConfigField("workflowRunPath", event.currentTarget.value)}
+                    />
+                  </label>
+                  <label className="field settings-grid__wide">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.workflowHistoryPath}</span>
+                    <input
+                      className="text-input"
+                      value={configForm.workflowHistoryPath}
+                      onChange={(event) => updateConfigField("workflowHistoryPath", event.currentTarget.value)}
+                    />
+                  </label>
+                </div>
+              </section>
+              <section className="settings-section">
+                <h3>超时与轮询</h3>
+                <div className="settings-grid">
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.workflowTimeoutMs}</span>
+                    <input
+                      className="text-input"
+                      min={1000}
+                      step={1000}
+                      type="number"
+                      value={configForm.workflowTimeoutMs}
+                      onChange={(event) => updateConfigField("workflowTimeoutMs", Number(event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.workflowPollIntervalMs}</span>
+                    <input
+                      className="text-input"
+                      min={1000}
+                      step={500}
+                      type="number"
+                      value={configForm.workflowPollIntervalMs}
+                      onChange={(event) => updateConfigField("workflowPollIntervalMs", Number(event.currentTarget.value))}
+                    />
+                  </label>
+                  <label className="field">
+                    <span className="field__label">{CONFIG_FIELD_LABELS.workflowPollTimeoutMs}</span>
+                    <input
+                      className="text-input"
+                      min={1000}
+                      step={1000}
+                      type="number"
+                      value={configForm.workflowPollTimeoutMs}
+                      onChange={(event) => updateConfigField("workflowPollTimeoutMs", Number(event.currentTarget.value))}
+                    />
+                  </label>
+                </div>
+              </section>
+              {settingsError ? <p className="form-error">{settingsError}</p> : null}
+              {settingsMessage ? <p className="export-message">{settingsMessage}</p> : null}
+              <div className="settings-actions">
+                <button className="primary-button" type="submit">
+                  保存配置
+                </button>
+                <button className="secondary-button" type="button" onClick={() => void refreshConfig()}>
+                  重新读取
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
+      )}
       {fullscreenPreview ? (
         <div className="fullscreen-preview" role="dialog" aria-modal="true">
           <div className="fullscreen-toolbar">

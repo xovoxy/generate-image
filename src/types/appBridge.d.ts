@@ -12,6 +12,47 @@ declare global {
         isReady: boolean;
         taskConcurrency: number;
       }>;
+      getCozeConfig: () => Promise<{
+        hasApiToken: boolean;
+        hasWorkflowId: boolean;
+        isReady: boolean;
+        taskConcurrency: number;
+        apiTokenPreview?: string;
+        workflowId: string;
+        apiBase: string;
+        fileUploadPath: string;
+        workflowRunPath: string;
+        workflowTimeoutMs: number;
+        workflowHistoryPath: string;
+        workflowPollIntervalMs: number;
+        workflowPollTimeoutMs: number;
+      }>;
+      saveCozeConfig: (input: {
+        apiToken?: string;
+        workflowId: string;
+        apiBase: string;
+        fileUploadPath: string;
+        workflowRunPath: string;
+        workflowTimeoutMs: number;
+        workflowHistoryPath: string;
+        workflowPollIntervalMs: number;
+        workflowPollTimeoutMs: number;
+        taskConcurrency: number;
+      }) => Promise<{
+        hasApiToken: boolean;
+        hasWorkflowId: boolean;
+        isReady: boolean;
+        taskConcurrency: number;
+        apiTokenPreview?: string;
+        workflowId: string;
+        apiBase: string;
+        fileUploadPath: string;
+        workflowRunPath: string;
+        workflowTimeoutMs: number;
+        workflowHistoryPath: string;
+        workflowPollIntervalMs: number;
+        workflowPollTimeoutMs: number;
+      }>;
       uploadCozeImages: (input: {
         imageAPath: string;
         imageBPath: string;
@@ -27,6 +68,27 @@ declare global {
         prompt: string;
       }) => Promise<{
         resultImages: string[];
+        executeId?: string;
+        debugUrl?: string;
+        raw: unknown;
+      }>;
+      startCozeWorkflow: (input: {
+        type: number;
+        image1Id: string;
+        image2Id: string;
+        prompt: string;
+      }) => Promise<{
+        executeId: string;
+        debugUrl?: string;
+        raw: unknown;
+      }>;
+      pollCozeWorkflow: (input: {
+        taskId: string;
+        executeId: string;
+      }) => Promise<{
+        resultImages: string[];
+        executeId?: string;
+        debugUrl?: string;
         raw: unknown;
       }>;
       runCozeTask: (input: {
