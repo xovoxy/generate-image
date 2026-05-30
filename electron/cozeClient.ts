@@ -1,7 +1,6 @@
 import { app } from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { Agent } from "undici";
 import { getCozeConfig } from "./config";
 
 type CozeFileUploadResponse = {
@@ -104,10 +103,6 @@ export type CozeWorkflowStartResult = {
   executeId: string;
   debugUrl?: string;
   raw: unknown;
-};
-
-type UndiciRequestInit = RequestInit & {
-  dispatcher?: Agent;
 };
 
 type CozeApiResponse = {
@@ -403,18 +398,13 @@ function buildWorkflowHistoryPath(template: string, workflowId: string, executeI
 }
 
 async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const startedAt = Date.now();
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), timeoutMs);
 
-  const dispatcher = new Agent({
-    headersTimeout: timeoutMs,
-    bodyTimeout: timeoutMs
-  });
-
   try {
-    const requestInit: UndiciRequestInit = {
+    const requestInit: RequestInit = {
       ...init,
-      dispatcher,
       signal: abortController.signal
     };
 
@@ -431,12 +421,25 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
 
     return responseBody;
   } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
+
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`Coze request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+      const elapsedSeconds = (elapsedMs / 1000).toFixed(1);
+      const timeoutSeconds = Math.round(timeoutMs / 1000);
+
+      if (elapsedMs >= timeoutMs * 0.95) {
+        throw new Error(`Coze request timed out after ${timeoutSeconds} seconds.`);
+      }
+
+      throw new Error(
+        `Coze request was aborted after ${elapsedSeconds} seconds before the configured ${timeoutSeconds}-second timeout. Original error: ${error.message || error.name}`
+      );
     }
 
     if (error instanceof Error && error.message.includes("fetch failed")) {
-      throw new Error(`Coze request failed before timeout. Please check your network, proxy, and Coze API URL. Original error: ${error.message}`);
+      throw new Error(
+        `Coze request failed after ${(elapsedMs / 1000).toFixed(1)} seconds. Please check your network, proxy, and Coze API URL. Original error: ${error.message}`
+      );
     }
 
     throw error;
