@@ -431,8 +431,12 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
 
     return responseBody;
   } catch (error) {
-    if (error instanceof Error && (error.name === "AbortError" || error.message.includes("fetch failed"))) {
+    if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`Coze request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+
+    if (error instanceof Error && error.message.includes("fetch failed")) {
+      throw new Error(`Coze request failed before timeout. Please check your network, proxy, and Coze API URL. Original error: ${error.message}`);
     }
 
     throw error;
