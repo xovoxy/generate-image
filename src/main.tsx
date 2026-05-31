@@ -257,6 +257,8 @@ function App() {
   const [configForm, setConfigForm] = React.useState<ConfigForm>();
   const [imageUrls, setImageUrls] = React.useState<Record<string, string>>({});
   const isPromptEmpty = prompt.trim().length === 0;
+  const selectedGenerateType = React.useMemo(() => getGenerateTypeByValue(selectedType), [selectedType]);
+  const selectedImageCount = selectedGenerateType?.imageCount ?? 2;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const selectedResult = selectedTask?.resultImages[selectedResultIndex];
   const selectedImageAUrl = selectedTask?.imageAPath ? imageUrls[selectedTask.imageAPath] : undefined;
@@ -288,7 +290,7 @@ function App() {
   function buildTaskFromInput() {
     setFormError(undefined);
 
-    const generateType = getGenerateTypeByValue(selectedType);
+    const generateType = selectedGenerateType;
     const trimmedPrompt = prompt.trim();
 
     if (!generateType) {
@@ -296,7 +298,12 @@ function App() {
       return undefined;
     }
 
-    if (!imageA || !imageB) {
+    if (!imageA) {
+      setFormError("请先上传参考图。");
+      return undefined;
+    }
+
+    if (generateType.imageCount === 2 && !imageB) {
       setFormError("请先上传图 A 和图 B。");
       return undefined;
     }
@@ -310,7 +317,7 @@ function App() {
       type: generateType.type,
       typeKey: generateType.key,
       imageAPath: imageA.path,
-      imageBPath: imageB.path,
+      imageBPath: generateType.imageCount === 2 ? imageB?.path : undefined,
       prompt: trimmedPrompt
     });
   }
@@ -875,7 +882,7 @@ function App() {
     <main className={`app-shell${activeView === "settings" ? " app-shell--settings" : ""}`}>
       <section className="panel input-panel">
         <h1>批量生图工作台</h1>
-        <p>上传两张参考图，选择生成类型，输入一句话后生成图片。</p>
+        <p>选择生成类型，上传参考图，输入一句话后生成图片。</p>
         {configReady === false ? (
           <p className="config-warning">Coze Token 或 Workflow ID 尚未配置。</p>
         ) : null}
@@ -902,7 +909,10 @@ function App() {
             <select
               className="select"
               value={selectedType}
-              onChange={(event) => setSelectedType(Number(event.currentTarget.value))}
+              onChange={(event) => {
+                setSelectedType(Number(event.currentTarget.value));
+                setFormError(undefined);
+              }}
             >
               {enabledTypes.map((type) => (
                 <option key={type.key} value={type.type}>
@@ -913,17 +923,19 @@ function App() {
           </label>
           <div className="image-input-grid">
             <ImageInput
-              label="图 A"
+              label={selectedImageCount === 1 ? "参考图" : "图 A"}
               image={imageA}
               onChange={handleImageChange(setImageA)}
               onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
             />
-            <ImageInput
-              label="图 B"
-              image={imageB}
-              onChange={handleImageChange(setImageB)}
-              onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
-            />
+            {selectedImageCount === 2 ? (
+              <ImageInput
+                label="图 B"
+                image={imageB}
+                onChange={handleImageChange(setImageB)}
+                onPreview={(image) => setFullscreenPreview({ imageUrl: image.previewUrl, imagePath: image.path, canDownload: false })}
+              />
+            ) : null}
           </div>
           <label className="field">
             <span className="field__label">生成描述</span>
@@ -1165,26 +1177,28 @@ function App() {
                   )}
                   <figcaption>{getFileName(selectedTask.imageAPath)}</figcaption>
                 </figure>
-                <figure>
-                  {selectedImageBUrl ? (
-                    <button
-                      className="detail-image-button"
-                      type="button"
-                      onClick={() =>
-                        setFullscreenPreview({
-                          imageUrl: selectedImageBUrl,
-                          imagePath: selectedTask.imageBPath,
-                          canDownload: false
-                        })
-                      }
-                    >
-                      <img src={selectedImageBUrl} alt="Reference B" />
-                    </button>
-                  ) : (
-                    <div className="image-placeholder">图 B 不可预览</div>
-                  )}
-                  <figcaption>{getFileName(selectedTask.imageBPath)}</figcaption>
-                </figure>
+                {selectedTask.imageBPath ? (
+                  <figure>
+                    {selectedImageBUrl ? (
+                      <button
+                        className="detail-image-button"
+                        type="button"
+                        onClick={() =>
+                          setFullscreenPreview({
+                            imageUrl: selectedImageBUrl,
+                            imagePath: selectedTask.imageBPath,
+                            canDownload: false
+                          })
+                        }
+                      >
+                        <img src={selectedImageBUrl} alt="Reference B" />
+                      </button>
+                    ) : (
+                      <div className="image-placeholder">图 B 不可预览</div>
+                    )}
+                    <figcaption>{getFileName(selectedTask.imageBPath)}</figcaption>
+                  </figure>
+                ) : null}
               </div>
             </section>
             <section className="detail-section">

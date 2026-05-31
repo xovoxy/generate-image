@@ -3,6 +3,7 @@ export type GenerateType = {
   key: string;
   name: string;
   description: string;
+  imageCount: 1 | 2;
   enabled: boolean;
 };
 
@@ -12,14 +13,16 @@ export const GENERATE_TYPES: GenerateType[] = [
     key: "object_consistency",
     name: "物体一致性",
     description: "保持主体物体一致，根据两张参考图和一句话生成新图",
+    imageCount: 2,
     enabled: true
   },
   {
     type: 2,
-    key: "person_consistency",
-    name: "人物一致性",
-    description: "保持人物身份一致，生成不同场景图",
-    enabled: false
+    key: "image_to_image",
+    name: "参考图生图",
+    description: "根据一张参考图和一句话生成新图",
+    imageCount: 1,
+    enabled: true
   }
 ];
 

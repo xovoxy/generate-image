@@ -1,4 +1,4 @@
-import { app } from "electron";
+import { app, nativeImage } from "electron";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getCozeConfig } from "./config";
@@ -81,14 +81,14 @@ export type UploadedCozeFile = {
 export type CozeWorkflowInput = {
   type: number;
   image1Id: string;
-  image2Id: string;
+  image2Id?: string;
   prompt: string;
 };
 
 export type CozeTaskInput = {
   type: number;
   imageAPath: string;
-  imageBPath: string;
+  imageBPath?: string;
   prompt: string;
 };
 
@@ -112,13 +112,81 @@ type CozeApiResponse = {
   data?: unknown;
 };
 
+const MAX_UPLOAD_IMAGE_BYTES = 10 * 1024 * 1024;
+
+type UploadableImage = {
+  fileName: string;
+  bytes: Uint8Array<ArrayBuffer>;
+};
+
+function getCompressedImageFileName(filePath: string) {
+  const extension = path.extname(filePath);
+  const baseName = path.basename(filePath, extension);
+
+  return `${baseName}-compressed.jpg`;
+}
+
+function toUploadBytes(buffer: Buffer) {
+  const bytes = new Uint8Array(buffer.byteLength);
+  bytes.set(buffer);
+
+  return bytes;
+}
+
+async function prepareUploadImage(filePath: string): Promise<UploadableImage> {
+  const originalBuffer = await fs.readFile(filePath);
+
+  if (originalBuffer.byteLength <= MAX_UPLOAD_IMAGE_BYTES) {
+    return {
+      fileName: path.basename(filePath),
+      bytes: toUploadBytes(originalBuffer)
+    };
+  }
+
+  const sourceImage = nativeImage.createFromPath(filePath);
+
+  if (sourceImage.isEmpty()) {
+    throw new Error(`图片超过 10MB，且无法压缩该图片：${path.basename(filePath)}`);
+  }
+
+  const originalSize = sourceImage.getSize();
+  let scale = 1;
+  let quality = 88;
+
+  for (let attempt = 0; attempt < 18; attempt += 1) {
+    const resizedImage =
+      scale < 1
+        ? sourceImage.resize({
+            width: Math.max(1, Math.round(originalSize.width * scale)),
+            height: Math.max(1, Math.round(originalSize.height * scale))
+          })
+        : sourceImage;
+
+    const compressedBuffer = resizedImage.toJPEG(quality);
+
+    if (compressedBuffer.byteLength <= MAX_UPLOAD_IMAGE_BYTES) {
+      return {
+        fileName: getCompressedImageFileName(filePath),
+        bytes: toUploadBytes(compressedBuffer)
+      };
+    }
+
+    if (quality > 48) {
+      quality -= 10;
+    } else {
+      scale *= 0.82;
+    }
+  }
+
+  throw new Error(`图片压缩后仍超过 10MB，请换一张更小的图片：${path.basename(filePath)}`);
+}
+
 export async function uploadCozeFile(filePath: string): Promise<UploadedCozeFile> {
   const config = getCozeConfig();
-  const fileName = path.basename(filePath);
-  const fileBuffer = await fs.readFile(filePath);
+  const uploadImage = await prepareUploadImage(filePath);
   const formData = new FormData();
 
-  formData.append("file", new Blob([fileBuffer]), fileName);
+  formData.append("file", new Blob([uploadImage.bytes]), uploadImage.fileName);
 
   const response = await fetch(`${config.apiBase}${config.fileUploadPath}`, {
     method: "POST",
@@ -146,7 +214,7 @@ export async function uploadCozeFile(filePath: string): Promise<UploadedCozeFile
 
   return {
     id,
-    fileName
+    fileName: uploadImage.fileName
   };
 }
 
@@ -160,6 +228,19 @@ export async function uploadCozeImagePair(imageAPath: string, imageBPath: string
     image1Id: imageA.id,
     image2Id: imageB.id
   };
+}
+
+export async function uploadCozeImages(imageAPath: string, imageBPath?: string) {
+  if (!imageBPath) {
+    const imageA = await uploadCozeFile(imageAPath);
+
+    return {
+      image1Id: imageA.id,
+      image2Id: undefined
+    };
+  }
+
+  return uploadCozeImagePair(imageAPath, imageBPath);
 }
 
 function collectImageUrls(value: unknown): string[] {
@@ -450,6 +531,20 @@ async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: n
 
 export async function startCozeWorkflow(input: CozeWorkflowInput): Promise<CozeWorkflowStartResult> {
   const config = getCozeConfig();
+  const parameters: Record<string, unknown> = {
+    image1: {
+      file_id: input.image1Id
+    },
+    prompt: input.prompt,
+    type: input.type
+  };
+
+  if (input.image2Id) {
+    parameters.image2 = {
+      file_id: input.image2Id
+    };
+  }
+
   const responseBody = await fetchJsonWithTimeout(
     `${config.apiBase}${config.workflowRunPath}`,
     {
@@ -461,16 +556,7 @@ export async function startCozeWorkflow(input: CozeWorkflowInput): Promise<CozeW
       body: JSON.stringify({
         workflow_id: config.workflowId,
         is_async: true,
-        parameters: {
-          image1: {
-            file_id: input.image1Id
-          },
-          image2: {
-            file_id: input.image2Id
-          },
-          prompt: input.prompt,
-          type: input.type
-        }
+        parameters
       })
     },
     config.workflowTimeoutMs
@@ -597,7 +683,7 @@ export async function persistWorkflowResultImages(resultImages: string[], taskId
 }
 
 export async function runCozeGenerationTask(input: CozeTaskInput & { taskId: string }): Promise<CozeWorkflowResult> {
-  const uploadedImages = await uploadCozeImagePair(input.imageAPath, input.imageBPath);
+  const uploadedImages = await uploadCozeImages(input.imageAPath, input.imageBPath);
 
   const result = await executeCozeWorkflow({
     type: input.type,

@@ -6,7 +6,7 @@ import {
   persistWorkflowResultImages,
   runCozeGenerationTask,
   startCozeWorkflow,
-  uploadCozeImagePair
+  uploadCozeImages
 } from "./cozeClient";
 import { getCozeConfigStatus, getEditableCozeConfig, saveCozeConfig } from "./config";
 import { exportGeneratedResults, saveSingleResultImage } from "./exportResults";
@@ -40,7 +40,7 @@ app.whenReady().then(() => {
   ipcMain.handle("coze:get-config", () => getEditableCozeConfig());
   ipcMain.handle("coze:save-config", (_event, input) => saveCozeConfig(input));
   ipcMain.handle("coze:upload-images", (_event, input) =>
-    uploadCozeImagePair(input.imageAPath, input.imageBPath)
+    uploadCozeImages(input.imageAPath, input.imageBPath)
   );
   ipcMain.handle("coze:start-workflow", (_event, input) => startCozeWorkflow(input));
   ipcMain.handle("coze:poll-workflow", async (_event, input) => {

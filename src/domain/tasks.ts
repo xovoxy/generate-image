@@ -18,7 +18,7 @@ export type GenerationTask = {
   type: number;
   typeKey: string;
   imageAPath: string;
-  imageBPath: string;
+  imageBPath?: string;
   prompt: string;
   status: TaskStatus;
   progress: number;
@@ -37,7 +37,7 @@ export type CreateGenerationTaskInput = {
   type: number;
   typeKey: string;
   imageAPath: string;
-  imageBPath: string;
+  imageBPath?: string;
   prompt: string;
 };
 

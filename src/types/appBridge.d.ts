@@ -55,16 +55,16 @@ declare global {
       }>;
       uploadCozeImages: (input: {
         imageAPath: string;
-        imageBPath: string;
+        imageBPath?: string;
       }) => Promise<{
         image1Id: string;
-        image2Id: string;
+        image2Id?: string;
       }>;
       executeCozeWorkflow: (input: {
         taskId: string;
         type: number;
         image1Id: string;
-        image2Id: string;
+        image2Id?: string;
         prompt: string;
       }) => Promise<{
         resultImages: string[];
@@ -75,7 +75,7 @@ declare global {
       startCozeWorkflow: (input: {
         type: number;
         image1Id: string;
-        image2Id: string;
+        image2Id?: string;
         prompt: string;
       }) => Promise<{
         executeId: string;
@@ -95,7 +95,7 @@ declare global {
         taskId: string;
         type: number;
         imageAPath: string;
-        imageBPath: string;
+        imageBPath?: string;
         prompt: string;
       }) => Promise<{
         resultImages: string[];
