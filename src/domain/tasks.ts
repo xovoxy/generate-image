@@ -24,6 +24,7 @@ export type GenerationTask = {
   progress: number;
   progressLabel: string;
   resultImages: string[];
+  originalResultImages: string[];
   errorMessage?: string;
   executeId?: string;
   debugUrl?: string;
@@ -58,6 +59,7 @@ export function createGenerationTask(
     progress: 0,
     progressLabel: "等待开始",
     resultImages: [],
+    originalResultImages: [],
     logs: [],
     createdAt: timestamp,
     updatedAt: timestamp

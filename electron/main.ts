@@ -45,18 +45,36 @@ app.whenReady().then(() => {
   ipcMain.handle("coze:start-workflow", (_event, input) => startCozeWorkflow(input));
   ipcMain.handle("coze:poll-workflow", async (_event, input) => {
     const result = await pollCozeWorkflowResult(input.executeId);
+    const persistedImages = await persistWorkflowResultImages(result.resultImages, input.taskId, {
+      type: input.type,
+      imageAPath: input.imageAPath,
+      imageBPath: input.imageBPath
+    });
 
     return {
       ...result,
-      resultImages: await persistWorkflowResultImages(result.resultImages, input.taskId)
+      resultImages: persistedImages.resultImages,
+      originalResultImages: persistedImages.originalResultImages
     };
   });
   ipcMain.handle("coze:execute-workflow", async (_event, input) => {
     const result = await executeCozeWorkflow(input);
+    const persistedImages = await persistWorkflowResultImages(
+      result.resultImages,
+      input.taskId,
+      input.imageAPath && input.imageBPath
+        ? {
+            type: input.type,
+            imageAPath: input.imageAPath,
+            imageBPath: input.imageBPath
+          }
+        : undefined
+    );
 
     return {
       ...result,
-      resultImages: await persistWorkflowResultImages(result.resultImages, input.taskId)
+      resultImages: persistedImages.resultImages,
+      originalResultImages: persistedImages.originalResultImages
     };
   });
   ipcMain.handle("coze:run-task", (_event, input) => runCozeGenerationTask(input));
