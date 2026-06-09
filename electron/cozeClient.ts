@@ -677,7 +677,7 @@ function getImageExtension(url: string, contentType: string | null) {
 }
 
 function getCropReferenceImagePath(input: ResultCropOptions) {
-  if (input.type === 2) {
+  if ([2, 4].includes(input.type)) {
     return input.imageAPath;
   }
 

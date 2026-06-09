@@ -23,6 +23,22 @@ export const GENERATE_TYPES: GenerateType[] = [
     description: "根据一张参考图和一句话生成新图",
     imageCount: 1,
     enabled: true
+  },
+  {
+    type: 3,
+    key: "background_replacement",
+    name: "背景置换",
+    description: "根据两张参考图和一句话替换背景生成新图",
+    imageCount: 2,
+    enabled: true
+  },
+  {
+    type: 4,
+    key: "style_transfer",
+    name: "风格转换",
+    description: "根据一张参考图和一句话转换图片风格",
+    imageCount: 1,
+    enabled: true
   }
 ];
 
