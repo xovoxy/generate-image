@@ -92,6 +92,7 @@ function normalizeTask(task: GenerationTask): GenerationTask {
     progress: task.progress ?? getFallbackProgress(task.status),
     progressLabel: task.progressLabel ?? TASK_STATUS_LABELS[task.status],
     resultImages: task.resultImages ?? [],
+    originalResultImages: task.originalResultImages ?? [],
     logs: task.logs ?? []
   };
 }
@@ -261,9 +262,11 @@ function App() {
   const selectedImageCount = selectedGenerateType?.imageCount ?? 2;
   const selectedTask = tasks.find((task) => task.id === selectedTaskId);
   const selectedResult = selectedTask?.resultImages[selectedResultIndex];
+  const selectedOriginalResult = selectedTask?.originalResultImages?.[selectedResultIndex];
   const selectedImageAUrl = selectedTask?.imageAPath ? imageUrls[selectedTask.imageAPath] : undefined;
   const selectedImageBUrl = selectedTask?.imageBPath ? imageUrls[selectedTask.imageBPath] : undefined;
   const selectedResultUrl = selectedResult ? imageUrls[selectedResult] : undefined;
+  const selectedOriginalResultUrl = selectedOriginalResult ? imageUrls[selectedOriginalResult] : undefined;
   const runningCount = tasks.filter((task) => task.status === "uploading" || task.status === "running").length;
   const pendingCount = tasks.filter((task) => task.status === "pending").length;
   const selectedTasks = tasks.filter((task) => selectedTaskIds.has(task.id));
@@ -447,19 +450,26 @@ function App() {
     );
   }
 
-  async function pollTaskResult(taskId: string, executeId: string) {
+  async function pollTaskResult(task: GenerationTask, executeId: string) {
     try {
-      const result = await window.appBridge.pollCozeWorkflow({ taskId, executeId });
+      const result = await window.appBridge.pollCozeWorkflow({
+        taskId: task.id,
+        executeId,
+        type: task.type,
+        imageAPath: task.imageAPath,
+        imageBPath: task.imageBPath
+      });
 
       setTasks((currentTasks) =>
         currentTasks.map((item) =>
-          item.id === taskId
+          item.id === task.id
             ? {
                 ...item,
                 status: "success",
                 progress: 100,
                 progressLabel: "生成完成",
                 resultImages: result.resultImages,
+                originalResultImages: result.originalResultImages ?? [],
                 executeId: result.executeId ?? item.executeId ?? executeId,
                 debugUrl: result.debugUrl ?? item.debugUrl,
                 logs: [...(item.logs ?? []), createTaskLog("info", `任务完成，返回 ${result.resultImages.length} 张结果图。`)],
@@ -473,7 +483,7 @@ function App() {
 
       setTasks((currentTasks) =>
         currentTasks.map((item) =>
-          item.id === taskId
+          item.id === task.id
             ? {
                 ...item,
                 status: "failed",
@@ -487,7 +497,7 @@ function App() {
         )
       );
     } finally {
-      runningTaskIdsRef.current.delete(taskId);
+      runningTaskIdsRef.current.delete(task.id);
     }
   }
 
@@ -557,7 +567,7 @@ function App() {
         )
       );
 
-      await pollTaskResult(task.id, started.executeId);
+      await pollTaskResult(task, started.executeId);
     } catch (error) {
       setTasks((currentTasks) =>
         currentTasks.map((item) =>
@@ -735,7 +745,7 @@ function App() {
     for (const task of resumableTasks) {
       runningTaskIdsRef.current.add(task.id);
       appendTaskLog(task.id, "info", "检测到未完成任务，继续轮询结果。");
-      void pollTaskResult(task.id, task.executeId as string);
+      void pollTaskResult(task, task.executeId as string);
     }
 
     const interruptedUploadTasks = tasks.filter(
@@ -826,7 +836,8 @@ function App() {
       selectedTask.imageAPath,
       selectedTask.imageBPath,
       fullscreenPreview?.imagePath,
-      ...selectedTask.resultImages
+      ...selectedTask.resultImages,
+      ...(selectedTask.originalResultImages ?? [])
     ].filter(isString).filter((filePath) => !imageUrls[filePath]);
 
     if (paths.length === 0) {
@@ -1217,23 +1228,68 @@ function App() {
                 <p>当前任务还没有可预览的结果。</p>
               ) : selectedResult && selectedResultUrl ? (
                 <div className="preview-stack">
-                  <button
-                    className="result-preview-button"
-                    type="button"
-                    onClick={() =>
-                      setFullscreenPreview({
-                        imageUrl: selectedResultUrl,
-                        imagePath: selectedResult,
-                        canDownload: true
-                      })
-                    }
-                  >
-                    <img
-                      className="result-preview"
-                      src={selectedResultUrl}
-                      alt="Generated result"
-                    />
-                  </button>
+                  <div className="result-compare-grid">
+                    <figure className="result-variant">
+                      <button
+                        className="result-preview-button"
+                        type="button"
+                        onClick={() =>
+                          setFullscreenPreview({
+                            imageUrl: selectedResultUrl,
+                            imagePath: selectedResult,
+                            canDownload: true
+                          })
+                        }
+                      >
+                        <img
+                          className="result-preview"
+                          src={selectedResultUrl}
+                          alt="Cropped generated result"
+                        />
+                      </button>
+                      <figcaption>
+                        <span>裁剪后</span>
+                        <button
+                          className="text-button"
+                          type="button"
+                          onClick={() => void window.appBridge.saveResultImage(selectedResult)}
+                        >
+                          下载
+                        </button>
+                      </figcaption>
+                    </figure>
+                    {selectedOriginalResult && selectedOriginalResultUrl ? (
+                      <figure className="result-variant">
+                        <button
+                          className="result-preview-button"
+                          type="button"
+                          onClick={() =>
+                            setFullscreenPreview({
+                              imageUrl: selectedOriginalResultUrl,
+                              imagePath: selectedOriginalResult,
+                              canDownload: true
+                            })
+                          }
+                        >
+                          <img
+                            className="result-preview"
+                            src={selectedOriginalResultUrl}
+                            alt="Original generated result"
+                          />
+                        </button>
+                        <figcaption>
+                          <span>裁剪前</span>
+                          <button
+                            className="text-button"
+                            type="button"
+                            onClick={() => void window.appBridge.saveResultImage(selectedOriginalResult)}
+                          >
+                            下载
+                          </button>
+                        </figcaption>
+                      </figure>
+                    ) : null}
+                  </div>
                   {selectedTask.resultImages.length > 1 ? (
                     <div className="result-thumbnails">
                       {selectedTask.resultImages.map((resultPath, index) => (

@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld("appBridge", {
     type: number;
     image1Id: string;
     image2Id?: string;
+    imageAPath?: string;
+    imageBPath?: string;
     prompt: string;
   }) => ipcRenderer.invoke("coze:execute-workflow", input),
   startCozeWorkflow: (input: {
@@ -34,7 +36,7 @@ contextBridge.exposeInMainWorld("appBridge", {
     image2Id?: string;
     prompt: string;
   }) => ipcRenderer.invoke("coze:start-workflow", input),
-  pollCozeWorkflow: (input: { taskId: string; executeId: string }) =>
+  pollCozeWorkflow: (input: { taskId: string; executeId: string; type: number; imageAPath: string; imageBPath?: string }) =>
     ipcRenderer.invoke("coze:poll-workflow", input),
   runCozeTask: (input: { taskId: string; type: number; imageAPath: string; imageBPath?: string; prompt: string }) =>
     ipcRenderer.invoke("coze:run-task", input),

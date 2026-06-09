@@ -65,9 +65,12 @@ declare global {
         type: number;
         image1Id: string;
         image2Id?: string;
+        imageAPath?: string;
+        imageBPath?: string;
         prompt: string;
       }) => Promise<{
         resultImages: string[];
+        originalResultImages?: string[];
         executeId?: string;
         debugUrl?: string;
         raw: unknown;
@@ -85,8 +88,12 @@ declare global {
       pollCozeWorkflow: (input: {
         taskId: string;
         executeId: string;
+        type: number;
+        imageAPath: string;
+        imageBPath?: string;
       }) => Promise<{
         resultImages: string[];
+        originalResultImages?: string[];
         executeId?: string;
         debugUrl?: string;
         raw: unknown;
@@ -99,6 +106,7 @@ declare global {
         prompt: string;
       }) => Promise<{
         resultImages: string[];
+        originalResultImages?: string[];
         raw: unknown;
       }>;
       exportResults: (input: {

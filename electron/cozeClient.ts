@@ -92,11 +92,28 @@ export type CozeTaskInput = {
   prompt: string;
 };
 
+export type ResultCropOptions = {
+  type: number;
+  imageAPath: string;
+  imageBPath?: string;
+};
+
 export type CozeWorkflowResult = {
   resultImages: string[];
+  originalResultImages?: string[];
   executeId?: string;
   debugUrl?: string;
   raw: unknown;
+};
+
+type SavedRemoteImage = {
+  resultImagePath: string;
+  originalImagePath: string;
+};
+
+type PersistedWorkflowImages = {
+  resultImages: string[];
+  originalResultImages: string[];
 };
 
 export type CozeWorkflowStartResult = {
@@ -659,7 +676,57 @@ function getImageExtension(url: string, contentType: string | null) {
   return extension || ".png";
 }
 
-async function saveRemoteImage(url: string, taskId: string, index: number) {
+function getCropReferenceImagePath(input: ResultCropOptions) {
+  if (input.type === 2) {
+    return input.imageAPath;
+  }
+
+  if ([1, 3].includes(input.type)) {
+    return input.imageBPath;
+  }
+
+  return undefined;
+}
+
+async function cropImageToReferenceSize(imagePath: string, outputPath: string, referenceImagePath: string) {
+  const sourceImage = nativeImage.createFromPath(imagePath);
+  const referenceImage = nativeImage.createFromPath(referenceImagePath);
+  const sourceSize = sourceImage.getSize();
+  const referenceSize = referenceImage.getSize();
+
+  if (
+    sourceImage.isEmpty() ||
+    referenceImage.isEmpty() ||
+    sourceSize.width <= 0 ||
+    sourceSize.height <= 0 ||
+    referenceSize.width <= 0 ||
+    referenceSize.height <= 0
+  ) {
+    return imagePath;
+  }
+
+  const scale = Math.max(referenceSize.width / sourceSize.width, referenceSize.height / sourceSize.height);
+  const resizedWidth = Math.max(referenceSize.width, Math.ceil(sourceSize.width * scale));
+  const resizedHeight = Math.max(referenceSize.height, Math.ceil(sourceSize.height * scale));
+  const resizedImage = sourceImage.resize({
+    width: resizedWidth,
+    height: resizedHeight,
+    quality: "best"
+  });
+  const cropX = Math.max(0, Math.floor((resizedWidth - referenceSize.width) / 2));
+  const cropY = Math.max(0, Math.floor((resizedHeight - referenceSize.height) / 2));
+  const croppedImage = resizedImage.crop({
+    x: cropX,
+    y: cropY,
+    width: referenceSize.width,
+    height: referenceSize.height
+  });
+  await fs.writeFile(outputPath, croppedImage.toPNG());
+
+  return outputPath;
+}
+
+async function saveRemoteImage(url: string, taskId: string, index: number, cropOptions?: ResultCropOptions): Promise<SavedRemoteImage> {
   const response = await fetch(url);
 
   if (!response.ok) {
@@ -670,16 +737,39 @@ async function saveRemoteImage(url: string, taskId: string, index: number) {
   await fs.mkdir(outputDir, { recursive: true });
 
   const extension = getImageExtension(url, response.headers.get("content-type"));
-  const outputPath = path.join(outputDir, `result-${String(index + 1).padStart(2, "0")}${extension}`);
+  const imageNumber = String(index + 1).padStart(2, "0");
+  const originalOutputPath = path.join(outputDir, `result-original-${imageNumber}${extension}`);
+  const croppedOutputPath = path.join(outputDir, `result-${imageNumber}.png`);
   const imageBuffer = Buffer.from(await response.arrayBuffer());
 
-  await fs.writeFile(outputPath, imageBuffer);
+  await fs.writeFile(originalOutputPath, imageBuffer);
 
-  return outputPath;
+  const referenceImagePath = cropOptions ? getCropReferenceImagePath(cropOptions) : undefined;
+
+  if (referenceImagePath) {
+    return {
+      resultImagePath: await cropImageToReferenceSize(originalOutputPath, croppedOutputPath, referenceImagePath),
+      originalImagePath: originalOutputPath
+    };
+  }
+
+  return {
+    resultImagePath: originalOutputPath,
+    originalImagePath: originalOutputPath
+  };
 }
 
-export async function persistWorkflowResultImages(resultImages: string[], taskId: string) {
-  return Promise.all(resultImages.map((url, index) => saveRemoteImage(url, taskId, index)));
+export async function persistWorkflowResultImages(
+  resultImages: string[],
+  taskId: string,
+  cropOptions?: ResultCropOptions
+): Promise<PersistedWorkflowImages> {
+  const savedImages = await Promise.all(resultImages.map((url, index) => saveRemoteImage(url, taskId, index, cropOptions)));
+
+  return {
+    resultImages: savedImages.map((item) => item.resultImagePath),
+    originalResultImages: savedImages.map((item) => item.originalImagePath)
+  };
 }
 
 export async function runCozeGenerationTask(input: CozeTaskInput & { taskId: string }): Promise<CozeWorkflowResult> {
@@ -692,8 +782,19 @@ export async function runCozeGenerationTask(input: CozeTaskInput & { taskId: str
     prompt: input.prompt
   });
 
+  const persistedImages = await persistWorkflowResultImages(
+    result.resultImages,
+    input.taskId,
+    {
+      type: input.type,
+      imageAPath: input.imageAPath,
+      imageBPath: input.imageBPath
+    }
+  );
+
   return {
     ...result,
-    resultImages: await persistWorkflowResultImages(result.resultImages, input.taskId)
+    resultImages: persistedImages.resultImages,
+    originalResultImages: persistedImages.originalResultImages
   };
 }
