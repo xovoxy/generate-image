@@ -249,6 +249,17 @@ select {
   background: #e0f889;
 }
 
+.task-form-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 10px;
+}
+
+.task-form-actions .primary-button,
+.task-form-actions .secondary-button {
+  width: 100%;
+}
+
 .secondary-button,
 .danger-button {
   height: 42px;
@@ -350,6 +361,7 @@ select {
 }
 
 .queue-panel {
+  overflow: hidden;
   background:
     linear-gradient(90deg, rgba(56, 106, 72, 0.08) 0, transparent 2px),
     var(--panel);
@@ -372,6 +384,7 @@ select {
 .queue-header,
 .detail-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
@@ -442,15 +455,18 @@ select {
 
 .queue-actions {
   display: flex;
+  flex: 0 0 auto;
   flex-wrap: wrap;
   gap: 8px;
 }
 
 .queue-filter-bar {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
+  flex: 0 0 auto;
   width: fit-content;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--field);
@@ -496,7 +512,9 @@ select {
 }
 
 .filter-button {
+  flex: 0 0 auto;
   height: 32px;
+  min-width: 56px;
   padding: 0 12px;
   border: 0;
   border-right: 1px solid var(--line);
@@ -582,6 +600,8 @@ select {
 
 .task-list {
   display: grid;
+  flex: 1 1 auto;
+  align-content: start;
   gap: 10px;
   min-height: 0;
   overflow-y: auto;

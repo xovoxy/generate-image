@@ -237,6 +237,9 @@ function App() {
   const [activeView, setActiveView] = React.useState<ActiveView>("workspace");
   const [imageA, setImageA] = React.useState<SelectedImage>();
   const [imageB, setImageB] = React.useState<SelectedImage>();
+  const [imageInputResetKey, setImageInputResetKey] = React.useState(0);
+  const imageARef = React.useRef<SelectedImage | undefined>(undefined);
+  const imageBRef = React.useRef<SelectedImage | undefined>(undefined);
   const enabledTypes = React.useMemo(() => getEnabledGenerateTypes(), []);
   const [selectedType, setSelectedType] = React.useState(enabledTypes[0]?.type ?? 1);
   const [prompt, setPrompt] = React.useState("");
@@ -251,6 +254,7 @@ function App() {
   const [taskStatusFilter, setTaskStatusFilter] = React.useState<TaskStatusFilter>("all");
   const runningTaskIdsRef = React.useRef<Set<string>>(new Set());
   const [formError, setFormError] = React.useState<string>();
+  const [hasAttemptedCreateTask, setHasAttemptedCreateTask] = React.useState(false);
   const [queueMessage, setQueueMessage] = React.useState<string>();
   const [settingsMessage, setSettingsMessage] = React.useState<string>();
   const [settingsError, setSettingsError] = React.useState<string>();
@@ -326,6 +330,8 @@ function App() {
   }
 
   function handleCreateTask() {
+    setHasAttemptedCreateTask(true);
+
     const task = buildTaskFromInput();
 
     if (!task) {
@@ -333,6 +339,37 @@ function App() {
     }
 
     enqueueTask(task);
+  }
+
+  function handleClearTaskInput() {
+    if (imageA) {
+      URL.revokeObjectURL(imageA.previewUrl);
+    }
+
+    if (imageB) {
+      URL.revokeObjectURL(imageB.previewUrl);
+    }
+
+    setImageA(undefined);
+    setImageB(undefined);
+    setPrompt("");
+    setFormError(undefined);
+    setHasAttemptedCreateTask(false);
+    setImageInputResetKey((currentKey) => currentKey + 1);
+
+    setFullscreenPreview((currentPreview) => {
+      if (
+        currentPreview &&
+        (currentPreview.imageUrl === imageA?.previewUrl ||
+          currentPreview.imageUrl === imageB?.previewUrl ||
+          currentPreview.imagePath === imageA?.path ||
+          currentPreview.imagePath === imageB?.path)
+      ) {
+        return undefined;
+      }
+
+      return currentPreview;
+    });
   }
 
   function toggleTaskSelection(taskId: string) {
@@ -878,16 +915,21 @@ function App() {
   }, [selectedTask, fullscreenPreview?.imagePath, imageUrls]);
 
   React.useEffect(() => {
+    imageARef.current = imageA;
+    imageBRef.current = imageB;
+  }, [imageA, imageB]);
+
+  React.useEffect(() => {
     return () => {
-      if (imageA) {
-        URL.revokeObjectURL(imageA.previewUrl);
+      if (imageARef.current) {
+        URL.revokeObjectURL(imageARef.current.previewUrl);
       }
 
-      if (imageB) {
-        URL.revokeObjectURL(imageB.previewUrl);
+      if (imageBRef.current) {
+        URL.revokeObjectURL(imageBRef.current.previewUrl);
       }
     };
-  }, [imageA, imageB]);
+  }, []);
 
   return (
     <main className={`app-shell${activeView === "settings" ? " app-shell--settings" : ""}`}>
@@ -934,6 +976,7 @@ function App() {
           </label>
           <div className="image-input-grid">
             <ImageInput
+              key={`image-a-${imageInputResetKey}`}
               label={selectedImageCount === 1 ? "参考图" : "图 A"}
               image={imageA}
               onChange={handleImageChange(setImageA)}
@@ -941,6 +984,7 @@ function App() {
             />
             {selectedImageCount === 2 ? (
               <ImageInput
+                key={`image-b-${imageInputResetKey}`}
                 label="图 B"
                 image={imageB}
                 onChange={handleImageChange(setImageB)}
@@ -957,12 +1001,17 @@ function App() {
               placeholder="用一句话描述想要生成的图片"
               onChange={(event) => setPrompt(event.currentTarget.value)}
             />
-            {isPromptEmpty ? <span className="field__hint">生成前需要填写描述。</span> : null}
+            {hasAttemptedCreateTask && isPromptEmpty ? <span className="field__hint">生成前需要填写描述。</span> : null}
           </label>
           {formError ? <p className="form-error">{formError}</p> : null}
-          <button className="primary-button" type="button" onClick={handleCreateTask}>
-            创建任务
-          </button>
+          <div className="task-form-actions">
+            <button className="primary-button" type="button" onClick={handleCreateTask}>
+              创建任务
+            </button>
+            <button className="secondary-button" type="button" onClick={handleClearTaskInput}>
+              清空
+            </button>
+          </div>
           </div>
         ) : (
           <div className="settings-intro">
